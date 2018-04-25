@@ -7,6 +7,7 @@ import (
 	"os"
 	"encoding/json"
 	"strings"
+	"os/signal"
 )
 
 type Message struct {
@@ -47,24 +48,49 @@ func main(){
 	println(conn.RemoteAddr())*/
 	reader := bufio.NewReader(conn)
 
+	println("deferring close connection")
+	//defer quit(conn)
+	//defer conn.Close()
+
+	c := make(chan os.Signal, 1)		//This code taken from StackOverflow
+	signal.Notify(c, os.Interrupt)		//Used for clean disconnect w/o breaking server on ^C interrupt
+	go func(){
+		for sig := range c {
+			// sig is a ^C, handle it
+			log.Printf("%v", sig)
+			quit(conn)
+			//conn.Close()
+			os.Exit(1)
+		}
+	}()
+
 	go sendMessages(conn)
 
 	for {
 		serverMsg, _ := reader.ReadBytes('\n') //Reads until a newline escape appears
-		print(string(serverMsg))				  	 //No need for println because \n forces new line
+		print(string(serverMsg))               //No need for println because \n forces new line
 	}
-	defer conn.Close()
+	println("end of main")
+}
+
+func quit(connection net.Conn){
+	var msg = Message{username, "quit", " "}
+	encodedMsg, _ := json.Marshal(msg)
+	println("Sending quit message")
+	connection.Write(encodedMsg)
+	connection.Close()
+	os.Exit(1)
 }
 
 func sendMessages(connection net.Conn){
 	var msg Message
 	inputReader = *bufio.NewReader(os.Stdin)
 	for {
-		msgBody, _ := inputReader.ReadString('\r')
+		msgBody, _ := inputReader.ReadString('\n')
 		msgCommand := "say"			//Unless otherwise stated the client is trying to send a message
 
 		//Isolate any /command in the message, to be compared to a list in the server
-		if msgBody[0] == byte('/'){	//If the first character is '/' then it is a command
+		if len(msgBody) != 0 && msgBody[0] == byte('/'){	//If the first character is '/' then it is a command
 			msgCommand = strings.SplitAfter(msgBody, " ")[0]	//Isolate command (with / and end space)
 			msgBody = strings.TrimLeft(msgBody, msgCommand)			//Remove command from message contents
 			msgCommand = strings.ToLower(msgCommand)				//Make lowercase for use in enum
@@ -73,6 +99,9 @@ func sendMessages(connection net.Conn){
 			msgCommand = strings.TrimRight(msgCommand, "\n")	//Eliminate endline
 		}
 
+		if msgCommand == "quit"{
+			quit(connection)
+		}
 		msg = Message{username, msgCommand, msgBody}
 		encodedMsg, _ := json.Marshal(msg)
 
